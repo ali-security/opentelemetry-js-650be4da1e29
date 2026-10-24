@@ -1,10 +1,6 @@
 name: Unit Tests
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-  merge_group:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,6 +19,7 @@ jobs:
           - "24"
           - "25"
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -43,13 +40,6 @@ jobs:
           matrix.node_version == '18' ||
           matrix.node_version == '20.6.0'
           }}
-      - run: npm install -g npm@latest
-        if: ${{
-          matrix.node_version == '20' ||
-          matrix.node_version == '22' ||
-          matrix.node_version == '24' ||
-          matrix.node_version == '25'
-          }}
 
       - name: Bootstrap
         run: npm ci --ignore-scripts
@@ -57,16 +47,39 @@ jobs:
       - name: Build 🔧
         run: npm run compile
 
-      - run: npm test
+      - name: Unit tests
+        run: npm test 2>&1 | tee seal-test.log
 
-      - name: Report Coverage
-        uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad # v5
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      - name: Test summary
+        shell: bash
+        run: |
+          sed 's/\x1b\[[0-9;]*m//g' seal-test.log > seal-test.clean.log
+          suites=$(awk '/^[[:space:]]*[0-9]+ passing/ {n++} END {print n+0}' seal-test.clean.log)
+          passing=$(awk '/^[[:space:]]*[0-9]+ passing/ {s+=$1} END {print s+0}' seal-test.clean.log)
+          failing=$(awk '/^[[:space:]]*[0-9]+ failing/ {s+=$1} END {print s+0}' seal-test.clean.log)
+          pending=$(awk '/^[[:space:]]*[0-9]+ pending/ {s+=$1} END {print s+0}' seal-test.clean.log)
+          echo "Mocha totals across ${suites} test runs: ${passing} passing, ${failing} failing, ${pending} pending"
+          core=$(awk '/nx run @opentelemetry\/core:test/ {f=1; next} f && /^[[:space:]]*[0-9]+ passing/ {print $1 " passing"; exit}' seal-test.clean.log)
+          echo "@opentelemetry/core: ${core}"
+          test "${failing}" -eq 0
+
+      - name: Pack @opentelemetry/core
+        if: matrix.node_version == '22'
+        run: |
+          mkdir -p ./seal-dist
+          npm pack --workspace=packages/opentelemetry-core --pack-destination=./seal-dist
+          mv ./seal-dist/opentelemetry-core-2.6.1.tgz ./seal-dist/core-2.6.1.tgz
+
+      - name: Upload @opentelemetry/core tarball
+        if: matrix.node_version == '22'
+        uses: actions/upload-artifact@v4
         with:
-          verbose: true
+          name: core-tgz
+          path: seal-dist/core-2.6.1.tgz
+          if-no-files-found: error
   node-windows-tests:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -78,8 +91,6 @@ jobs:
             package-lock.json
           node-version: '22'
 
-      - run: npm install -g npm@latest
-
       - name: Bootstrap
         run: npm ci --ignore-scripts
 
@@ -89,9 +100,24 @@ jobs:
           npm run compile
 
       - name: Unit tests
-        run: npm run test
+        shell: bash
+        run: npm run test 2>&1 | tee seal-test.log
+
+      - name: Test summary
+        shell: bash
+        run: |
+          sed 's/\x1b\[[0-9;]*m//g' seal-test.log > seal-test.clean.log
+          suites=$(awk '/^[[:space:]]*[0-9]+ passing/ {n++} END {print n+0}' seal-test.clean.log)
+          passing=$(awk '/^[[:space:]]*[0-9]+ passing/ {s+=$1} END {print s+0}' seal-test.clean.log)
+          failing=$(awk '/^[[:space:]]*[0-9]+ failing/ {s+=$1} END {print s+0}' seal-test.clean.log)
+          pending=$(awk '/^[[:space:]]*[0-9]+ pending/ {s+=$1} END {print s+0}' seal-test.clean.log)
+          echo "Mocha totals across ${suites} test runs: ${passing} passing, ${failing} failing, ${pending} pending"
+          core=$(awk '/nx run @opentelemetry\/core:test/ {f=1; next} f && /^[[:space:]]*[0-9]+ passing/ {print $1 " passing"; exit}' seal-test.clean.log)
+          echo "@opentelemetry/core: ${core}"
+          test "${failing}" -eq 0
   browser-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -111,14 +137,9 @@ jobs:
 
       - name: Unit tests
         run: npm run test:browser
-      - name: Report Coverage
-        uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad # v5
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        with:
-          verbose: true
   webworker-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -137,9 +158,3 @@ jobs:
 
       - name: Unit tests
         run: npm run test:webworker
-      - name: Report Coverage
-        uses: codecov/codecov-action@1af58845a975a7985b0beb0cbe6fbbb71a41dbad # v5
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        with:
-          verbose: true
